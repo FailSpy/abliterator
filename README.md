@@ -8,7 +8,7 @@ If you're interested in notebooking your own orthgonalized model, this library w
 This library is so exceedingly barebones for right now, and documentation is slim at the moment (WYSIWYG!). Right now, it feels like a glorified IPython notebook rather than something more broadly useful.
 I want to publish this now to lay out the template, and hopefully bring this up to snuff over time. Ideally with the help of the community!
 
-Right now, this works very well for my own personal workflow, but I would like to automate this further, and broaden out from the pure "harmless / harmful" feature ablation, to augmentation, and adding additional features
+Right now, this works very well for my own personal workflow, but I would like to systematize and ideally automate this further, and broaden out from the pure "harmless / harmful" feature ablation, to augmentation, and adding additional features
 
 ## Loading a model in
 ```python
@@ -45,6 +45,10 @@ Once loaded in, run the model against N samples of harmful, and N samples of har
 my_model.cache_activations(N=512,reset=True,preserve_harmless=True)
 ```
 `preserve_harmless=True` is generally useful, as it keeps the "desired behaviour" unaltered from any stacked modifications if you run it after some mods.
+
+## Saving state
+Most of the advantage of this is a lot of groundwork has been laid to make it so you aren't repeating yourself 1000 times just to try one little experiment.
+`save_activations('file.pth')` will save your cached activations, and any currently applied modifications to the model's weights to a file so you can restore them next time you load up with `cache_fname='file.pth'` in your ModelAbliterator initialization.
 
 ## Getting refusal directions from the cached activations
 Speaking of modding, here's a simple representation of how to pick, test, and actually apply a direction from a layer's activations:
@@ -94,7 +98,7 @@ By default, all layers are whitelisted. I recommend blacklisting the first and l
 
 Neither of these will provide success/failure states. They will just assure the desired state in running it at that instant.
 
-## Confirming your model is A-okay
+## Benchmarking
 Now to make sure you've not damaged the model dramatically after applying some stuff, you can do a test run:
 ```python
 with my_model: # loads a temporary context with the model
