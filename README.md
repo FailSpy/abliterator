@@ -1,8 +1,12 @@
 # abliterator.py
-Simple Python library/structure to ablate features in LLMs which are supported by TransformerLens
+Simple Python library/structure to ablate features in LLMs which are supported by TransformerLens.
 
-This library is so exceedingly barebones for right now, and documentation is slim at the moment. Right now, it feels like a glorified IPython notebook.
-I want to publish this now and hopefully bring this up to snuff over time, with the help of the community.
+Most of its advantage in workflow comes from being able to enter temporary contexts, quickly cache activations with N samples, refusal direction calculation built-in, and tokenizer utilities. As well as wrapping around certain quirks of TransformerLens.
+
+If you're interested in notebooking your own orthgonalized model, this library will help save you a LOT of time in performing and measuring experiments to find your best orthogonalization.
+
+This library is so exceedingly barebones for right now, and documentation is slim at the moment (WYSIWYG!). Right now, it feels like a glorified IPython notebook rather than something more broadly useful.
+I want to publish this now to lay out the template, and hopefully bring this up to snuff over time. Ideally with the help of the community!
 
 Right now, this works very well for my own personal workflow, but I would like to automate this further, and broaden out from the pure "harmless / harmful" feature ablation, to augmentation, and adding additional features
 
@@ -86,7 +90,7 @@ And naturally, to undo this and make sure a layer can be overwritten:
 ```
 my_model.whitelist_layer(27)
 ```
-By default, all layers are whitelisted.
+By default, all layers are whitelisted. I recommend blacklisting the first and last couple layers, as those can and will have dramatic effects on outputs.
 
 Neither of these will provide success/failure states. They will just assure the desired state in running it at that instant.
 
