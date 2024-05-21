@@ -1,0 +1,8 @@
+torch
+einops
+datasets
+scikit-learn
+tqdm
+transformer-lens
+transformers
+jaxtyping
