@@ -14,9 +14,8 @@ Right now, this works very well for my own personal workflow, but I would like t
 ```python
 import abliterator
 
-model = "LoadedInModel/Llama-3-70B-Instruct-but-Better"  # the huggingface or path to the model you're interested in loading in
+model = "meta-llama/Meta-Llama-3-70B-Instruct"  # the huggingface or path to the model you're interested in loading in
 dataset = [abliterator.get_harmful_instructions(), abliterator.get_harmless_instructions()] # datasets to be used for caching and testing, split by harmful/harmless
-aliased_model = "meta-llama/Meta-Llama-3-70B-Instruct"   # optional: load in model using the config from its base model -- makes transformer lens happy. Can be None
 device = 'cuda'                             # optional: defaults to cuda
 n_devices = None                            # optional: when set to None, defaults to `device.cuda.device_count`
 cache_fname = 'my_cached_point.pth'         # optional: if you need to save where you left off, you can use `save_activations(filename)` which will write out a file. This is how you load that back in.
@@ -28,14 +27,13 @@ positive_toks = [23371, 40914]              # optional, but highly recommended: 
 my_model = abliterator.ModelAbliterator(
   model,
   dataset,
-  aliased_model,
   device='cuda',
   n_devices=None,
   cache_fname=None,
-  activation_layers=['resid_pre', 'resid_mid', 'resid_post'],
-  chat_template=None,
-  positive_toks={},
-  negative_toks={}
+  activation_layers=['resid_pre', 'resid_post', 'attn_out', 'mlp_out'],
+  chat_template="<system>\n{instruction}<end><assistant>",
+  positive_toks=positive_toks,
+  negative_toks=negative_toks
 )
 ```
 
