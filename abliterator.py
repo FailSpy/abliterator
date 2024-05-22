@@ -17,7 +17,12 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from jaxtyping import Float, Int
 
 def batch(iterable, n):
-    return iter(lambda: list(islice(iterable, n)), [])
+    it = iter(iterable)
+    while True:
+        chunk = list(islice(it, n))
+        if not chunk:
+            break
+        yield chunk
 
 def get_harmful_instructions():
     hf_path = 'Undi95/orthogonal-activation-steering-TOXIC'
@@ -73,19 +78,6 @@ def measure_fn(measure,*args,**kwargs):
     except:
         raise NotImplementedError(f"Unknown measure function '{measure}'")
 
-def from_pretrained_aliased(model_name,cfg_model,*args,**kwargs):
-    # Runs any model_name as an alias to a specified model
-    if cfg_model:
-        proper = loading.get_official_model_name(cfg_model)
-        if proper != model_name:
-            current = loading.MODEL_ALIASES.get(proper,[])
-            current.append(model_name.lower())
-            loading.MODEL_ALIASES[proper] = current
-    return HookedTransformer.from_pretrained_no_processing(
-        model_name,
-        *args, **kwargs
-    )
-
 class ChatTemplate:
     def __init__(self,model,template):
         self.model = model
@@ -104,10 +96,11 @@ class ChatTemplate:
         del self.prev
 
 
-LLAMA3_CHAT_TEMPLATE = """<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n{instruction}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"""
+LLAMA3_CHAT_TEMPLATE = """<|start_header_id|>user<|end_header_id|>\n{instruction}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"""
+PHI3_CHAT_TEMPLATE = """<|user|>\n{instruction}<|end|>\n<|assistant|>"""
 
 class ModelAbliterator:
-    def __init__(self, model, dataset, aliased_model=None,  device='cuda', n_devices=None, cache_fname=None, activation_layers=['resid_pre', 'resid_mid', 'resid_post'],chat_template=None, positive_toks=None, negative_toks=None):
+    def __init__(self, model, dataset, device='cuda', n_devices=None, cache_fname=None, activation_layers=['resid_pre',  'resid_post', 'mlp_out', 'attn_out'],chat_template=None, positive_toks=None, negative_toks=None):
         self.MODEL_PATH = model
         if n_devices is None and torch.cuda.is_available():
             n_devices = torch.cuda.device_count()
@@ -117,9 +110,8 @@ class ModelAbliterator:
         # Save memory
         torch.set_grad_enabled(False)
 
-        self.model = from_pretrained_aliased(
+        self.model = HookedTransformer.from_pretrained_no_processing(
             model,
-            aliased_model,
             n_devices=n_devices,
             device=device,
             dtype=torch.bfloat16,
@@ -140,13 +132,10 @@ class ModelAbliterator:
         self.checkpoints = []
 
         if cache_fname is not None:
-            outs = torch.load(cache_fname)
-            self.harmful,self.harmless,modified_layers,checkpoints = outs[:3]
-            checkpoints = None
-            if modified_layers is not None:
-                self.rebuild(modified_layers,False)
-            if checkpoints is not None:
-                self.checkpoints = checkpoints
+            outs = torch.load(cache_fname,map_location='cpu')
+            self.harmful,self.harmless,modified_layers,checkpoints = outs[:4]
+            self.checkpoints = checkpoints or []
+            self.modified_layers = modified_layers
 
         self.harmful_inst_train,self.harmful_inst_test = prepare_dataset(dataset[0])
         self.harmless_inst_train,self.harmless_inst_test = prepare_dataset(dataset[1])
@@ -282,8 +271,9 @@ class ModelAbliterator:
     ) -> Int[Tensor, 'batch_size seq_len']:
         prompts = [self.chat_template.format(instruction=instruction) for instruction in instructions]
         return self.model.tokenizer(prompts, padding=True, truncation=False, return_tensors="pt").input_ids
-    
+
     def generate_logits(self, toks, *args, drop_refusals=True, stop_at_eos=False, max_tokens_generated=1, **kwargs):
+        # does most of the model magic
         all_toks = torch.zeros((toks.shape[0],toks.shape[1]+max_tokens_generated), dtype=torch.long, device=toks.device)
         all_toks[:, :toks.shape[1]] = toks
         generating = [i for i in range(toks.shape[0])]
@@ -302,7 +292,7 @@ class ModelAbliterator:
         return logits, all_toks
 
     def generate(self, prompt, *model_args, max_tokens_generated=64, stop_at_eos=True, **model_kwargs):
-        # convenience function to test manual prompts
+        # convenience function to test manual prompts, no caching
         if type(prompt) is str:
             gen = self.tokenize_instructions_fn([prompt])
         else:
@@ -318,7 +308,7 @@ class ModelAbliterator:
             for i, res in enumerate(self.generate(prompts, *args, **kwargs)):
                 print(res)
 
-    def run_with_cache(self, *model_args, names_filter=None, incl_bwd=False, device=None, remove_batch_dim=False, reset_hooks_end=True, clear_contexts=False, fwd_hooks=[], max_new_tokens=1, drop_refusals=True, **model_kwargs):
+    def run_with_cache(self, *model_args, names_filter=None, incl_bwd=False, device=None, remove_batch_dim=False, reset_hooks_end=True, clear_contexts=False, fwd_hooks=[], max_new_tokens=1, **model_kwargs):
         if names_filter is None and self.activation_layers:
             def activation_layering(namefunc):
                 return any(s in namefunc for s in self.activation_layers)
@@ -374,7 +364,7 @@ class ModelAbliterator:
                     avg_proj = refusal_dir * self.get_avg_projections(utils.get_act_name(self.activation_layers[0], layer),refusal_dir)
                     modifying[1](layer,(matrix - proj) + avg_proj)
         
-    def test_dir(self,refusal_dir,activation_layers=None,use_hooks=True,layers=None,N=4):
+    def test_dir(self,refusal_dir,activation_layers=None,use_hooks=True,layers=None,**kwargs):
         # `use_hooks=True` is better for bigger models as it causes a lot of memory swapping otherwise, but 
         # `use_hooks=False` is much more representative of the final weights manipulation
 
@@ -390,11 +380,11 @@ class ModelAbliterator:
                 hooks = self.fwd_hooks
                 hook_fn = functools.partial(directional_hook,direction=refusal_dir)
                 self.fwd_hooks = before_hooks+[(act_name,hook_fn) for ln,act_name in self.get_all_act_names()]
-                return self.measure_scores(N=N)
+                return self.measure_scores(**kwargs)
             else:
                 with self:
                     self.apply_refusal_dirs([refusal_dir],layers=layers)
-                    return self.measure_scores(N=N)
+                    return self.measure_scores(**kwargs)
         finally:
             self.fwd_hooks = before_hooks
     
@@ -408,24 +398,27 @@ class ModelAbliterator:
             scores.append((score,direction))
         return sorted(scores,key=lambda x:x[0])
 
-    def measure_scores(self, N=4,seq_check=8, measure='max', batch_measure='max', positive=False):
+    def measure_scores(self, N=4, sampled_token_ct=8, measure='max', batch_measure='max', positive=False):
         toks = self.tokenize_instructions_fn(instructions=self.harmful_inst_test[:N])
-        logits,cache = self.run_with_cache(toks,max_new_tokens=seq_check,drop_refusals=True)
-        positive_score,negative_score = self.measure_scores_from_logits(logits,seq_check,measure=batch_measure)
+        logits,cache = self.run_with_cache(toks,max_new_tokens=sampled_token_ct,drop_refusals=False)
+        
+        negative_score,positive_score = self.measure_scores_from_logits(logits,sampled_token_ct,measure=batch_measure)
+        
         negative_score = measure_fn(measure,negative_score)
         positive_score = measure_fn(measure,positive_score)
-        return negative_score.to('cpu'), positive_score.to('cpu')
+        return {'negative':negative_score.to('cpu'), 'positive':positive_score.to('cpu')}
 
     def measure_scores_from_logits(self,logits, sequence, measure='max'):
         normalized_scores = torch.softmax(logits[:,-sequence:,:].to('cpu'),dim=-1)[:,:,list(self.positive_toks)+list(self.negative_toks)]
+        
         normalized_positive,normalized_negative = torch.split(normalized_scores,[len(self.positive_toks), len(self.negative_toks)], dim=2)
 
-        max_refusal_score_per_sequence = torch.max(normalized_negative,dim=-1)[0]
+        max_negative_score_per_sequence = torch.max(normalized_negative,dim=-1)[0]
         max_positive_score_per_sequence = torch.max(normalized_positive,dim=-1)[0]
 
-        refusal_score_per_batch = measure_fn(measure,max_refusal_score_per_sequence,dim=-1)[0]
+        negative_score_per_batch = measure_fn(measure,max_negative_score_per_sequence,dim=-1)[0]
         positive_score_per_batch = measure_fn(measure,max_positive_score_per_sequence,dim=-1)[0]
-        return refusal_score_per_batch,positive_score_per_batch
+        return negative_score_per_batch,positive_score_per_batch
 
     def do_resid(self,fn_name):
         if not any("resid" in k for k in self.harmless.keys()):
@@ -442,11 +435,11 @@ class ModelAbliterator:
         return self.do_resid("accumulated_resid")
 
     def unembed_resid(self,resid, pos=-1):
-        W_U = self.model.W_U.to('cpu')
+        W_U = self.model.W_U
         if pos == None:
-            return einops.einsum(resid, W_U,"layer batch d_model, d_model d_vocab -> layer batch d_vocab")
+            return einops.einsum(resid.to(W_U.device), W_U,"layer batch d_model, d_model d_vocab -> layer batch d_vocab").to('cpu')
         else:
-            return einops.einsum(resid[:,pos,:],W_U,"layer d_model, d_model d_vocab -> layer d_vocab")
+            return einops.einsum(resid[:,pos,:].to(W_U.device),W_U,"layer d_model, d_model d_vocab -> layer d_vocab").to('cpu')
 
     def create_layer_rankings(self, token_set, decompose=True, token_set_b=None):
         decomposer = self.decomposed_resid if decompose else self.accumulated_resid
@@ -454,8 +447,8 @@ class ModelAbliterator:
         decomposed_resid_harmful, decomposed_resid_harmless, labels = decomposer()
 
         W_U = self.model.W_U.to('cpu')
-        unembedded_harmful = unembed_resid(decomposed_resid_harmful)
-        unembedded_harmless = unembed_resid(decomposed_resid_harmless)
+        unembedded_harmful = self.unembed_resid(decomposed_resid_harmful)
+        unembedded_harmless = self.unembed_resid(decomposed_resid_harmless)
 
         sorted_harmful_indices = torch.argsort(unembedded_harmful, dim=1, descending=True)
         sorted_harmless_indices = torch.argsort(unembedded_harmless, dim=1, descending=True)
@@ -466,7 +459,7 @@ class ModelAbliterator:
         indices_in_set = zip(harmful_set.nonzero(as_tuple=True)[1],harmless_set.nonzero(as_tuple=True)[1])
         return indices_in_set
 
-    def mse_positive(self,N=128,batch_size=8,last_indices=3):
+    def mse_positive(self,N=128,batch_size=8,last_indices=1):
         # Calculate mean squared error against currently loaded negative cached activation
         # Idea being to get a general sense of how the "normal" direction has been altered.
         # This is to compare ORIGINAL functionality to ABLATED functionality, not for ground truth.
@@ -494,7 +487,7 @@ class ModelAbliterator:
 
         return {k:F.mse_loss(self.loss_harmless[k].float()[:N],self.harmless[k].float()[:N]) for k in self.loss_harmless}
 
-    def create_activation_cache(self, toks, N=128, batch_size=8, last_indices=3, measure_refusal=0, stop_at_layer=None):
+    def create_activation_cache(self, toks, N=128, batch_size=8, last_indices=1, measure_refusal=0, stop_at_layer=None):
         # Base functionality for creating an activation cache with a training set, prefer 'cache_activations' for regular usage
 
         base = dict()
@@ -516,7 +509,7 @@ class ModelAbliterator:
         
         return ActivationCache(base,self.model), z_label
 
-    def cache_activations(self,N=128,batch_size=8,measure_refusal=0,last_indices=3,reset=True,activation_layers=-1,preserve_harmless=True,stop_at_layer=None):
+    def cache_activations(self,N=128,batch_size=8,measure_refusal=0,last_indices=1,reset=True,activation_layers=-1,preserve_harmless=True,stop_at_layer=None):
         if hasattr(self,"current_state"):
             print("WARNING: Caching activations using a context")
         if self.modified:
@@ -525,7 +518,7 @@ class ModelAbliterator:
         if activation_layers == -1:
             activation_layers = self.activation_layers
 
-        if reset == True:
+        if reset == True or getattr(self,"harmless",None) == None:
             self.harmful = {}
             if not preserve_harmless or getattr(self,"harmless",None) == None:
                 preserve_harmless = False
