@@ -5,6 +5,9 @@ Most of its advantage in workflow comes from being able to enter temporary conte
 
 If you're interested in notebooking your own orthgonalized model, this library will help save you a LOT of time in performing and measuring experiments to find your best orthogonalization.
 
+Right now it's just bits and pieces to make it so to process and experiment with ablation direction turns into shorter, hopefully clearer code without losing track of where things are at.
+It's mainly just encapsulating a lot of useful logic that you'll find yourself writing if you're looking to do this more.
+
 This library is so exceedingly barebones for right now, and documentation is slim at the moment (WYSIWYG!). Right now, it feels like a glorified IPython notebook rather than something more broadly useful.
 I want to publish this now to lay out the template, and hopefully bring this up to snuff over time. Ideally with the help of the community!
 
