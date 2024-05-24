@@ -225,7 +225,7 @@ class ModelAbliterator:
         act_key = key or self.activation_layers[0]
         if len(self.harmfuls[key]) < layer:
             raise IndexError("Invalid layer")
-        calculate_mean_dirs(utils.get_act_name(act_key, layer), include_overall_mean=include_overall_mean)
+        self.calculate_mean_dirs(utils.get_act_name(act_key, layer), include_overall_mean=include_overall_mean)
 
     def refusal_dirs(self,invert=False):
         if not self.harmful:
