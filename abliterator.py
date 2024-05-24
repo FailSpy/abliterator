@@ -63,20 +63,18 @@ def clear_mem():
     gc.collect()
     torch.cuda.empty_cache()
 
-
-measure_fns = {
-    'mean': torch.mean,
-    'median': torch.median,
-    'max': torch.max,
-    'stack': torch.stack
-}
-
-
 def measure_fn(measure,*args,**kwargs):
+    avail_measures = {
+        'mean': torch.mean,
+        'median': torch.median,
+        'max': torch.max,
+        'stack': torch.stack
+    }
+
     try:
-        return measure_fns.get(measure)(*args,**kwargs)
+        return avail_measures.get(measure)(*args,**kwargs)
     except:
-        raise NotImplementedError(f"Unknown measure function '{measure}'")
+        raise NotImplementedError(f"Unknown measure function '{measure}'. Available measures:" + ', '.join([f"'{str(fn)}'" for fn in avail_measures.keys()]) )
 
 class ChatTemplate:
     def __init__(self,model,template):
