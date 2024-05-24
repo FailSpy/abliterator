@@ -28,7 +28,7 @@ def get_harmful_instructions():
     hf_path = 'Undi95/orthogonal-activation-steering-TOXIC'
     dataset = load_dataset(hf_path)
     instructions = [i['goal'] for i in dataset['test']]
-    
+
     train, test = train_test_split(instructions, test_size=0.2, random_state=42)
     return train, test
 
@@ -63,20 +63,18 @@ def clear_mem():
     gc.collect()
     torch.cuda.empty_cache()
 
+def measure_fn(measure, input_tensor, *args,**kwargs):
+    avail_measures = {
+        'mean': torch.mean,
+        'median': torch.median,
+        'max': torch.max,
+        'stack': torch.stack
+    }
 
-measure_fns = {
-    'mean': torch.mean,
-    'median': torch.median,
-    'max': torch.max,
-    'stack': torch.stack
-}
-
-
-def measure_fn(measure,*args,**kwargs):
     try:
-        return measure_fns.get(measure)(*args,**kwargs)
-    except:
-        raise NotImplementedError(f"Unknown measure function '{measure}'")
+        return avail_measures[measure](input_tensor, *args,**kwargs)
+    except KeyError:
+        raise NotImplementedError(f"Unknown measure function '{measure}'. Available measures:" + ', '.join([f"'{str(fn)}'" for fn in avail_measures.keys()]) )
 
 class ChatTemplate:
     def __init__(self,model,template):
@@ -85,7 +83,7 @@ class ChatTemplate:
 
     def format(self,instruction):
         return self.template.format(instruction=instruction)
-    
+
     def __enter__(self):
         self.prev = self.model.chat_template
         self.model.chat_template = self
@@ -175,7 +173,7 @@ class ModelAbliterator:
         self.modified = False
         self.modified_layers = {'mlp':{}, 'W_O':{}}
         self.model.load_state_dict(self.original_state)
-    
+
     def checkpoint(self):
         # MAYBE: Offload to disk? That way we're not taking up RAM with this
         self.checkpoints.append(self.modified_layers.copy())
@@ -197,19 +195,19 @@ class ModelAbliterator:
                 self._blacklisted.discard(l)
         else:
             self._blacklisted.discard(layer)
-    
+
     def save_activations(self, fname):
         torch.save([self.harmful,self.harmless,self.modified_layers if self.modified_layers['mlp'] or self.modified_layers['W_O'] else None, self.checkpoints if len(self.checkpoints) > 0 else None], fname)
 
     def get_whitelisted_layers(self):
         return [l for l in range(self.model.cfg.n_layers) if l not in self._blacklisted]
-    
+
     def get_all_act_names(self,activation_layers=None):
         return [(i,utils.get_act_name(act_name,i)) for i in self.get_whitelisted_layers() for act_name in (activation_layers or self.activation_layers)]
 
     def calculate_mean_dir(self,key,d):
         return sum(d[key]) / len(d[key])
-    
+
     def calculate_mean_dirs(self,key,include_overall_mean=False):
         dirs = {
             'harmful_mean': self.calculate_mean_dir(key,self.harmful),
@@ -227,12 +225,12 @@ class ModelAbliterator:
         act_key = key or self.activation_layers[0]
         if len(self.harmfuls[key]) < layer:
             raise IndexError("Invalid layer")
-        calculate_mean_dirs(utils.get_act_name(act_key, layer), include_overall_mean=include_overall_mean)
-    
+        return self.calculate_mean_dirs(utils.get_act_name(act_key, layer), include_overall_mean=include_overall_mean)
+
     def refusal_dirs(self,invert=False):
         if not self.harmful:
             raise IndexError("No cache")
-        
+
         refusal_dirs = {key:self.calculate_mean_dirs(key) for key in self.harmful if '.0.' not in key} # don't include layer 0, as it often becomes NaN
         if invert:
             refusal_dirs = {key:v['harmless_mean']-v['harmful_mean'] for key,v in refusal_dirs.items()}
@@ -248,7 +246,7 @@ class ModelAbliterator:
     def get_layer_of_act_name(self,ref):
         s = re.search(r"\.(\d+)\.",ref)
         return s if s is None else int(s[1])
-    
+
     def layer_attn(self,layer,replacement=None):
         if replacement is not None and layer not in self._blacklisted:
             # make sure device doesn't change
@@ -256,7 +254,7 @@ class ModelAbliterator:
             self.model.blocks[layer].attn.W_O.data = replacement.to(self.model.blocks[layer].attn.W_O.device)
             self.modified_layers['W_O'][layer] = self.modified_layers.get(layer,[])+[(self.model.blocks[layer].attn.W_O.data.to('cpu'),replacement.to('cpu'))]
         return self.model.blocks[layer].attn.W_O.data
-    
+
     def layer_mlp(self,layer,replacement=None):
         if replacement is not None and layer not in self._blacklisted:
             # make sure device doesn't change
@@ -264,7 +262,7 @@ class ModelAbliterator:
             self.model.blocks[layer].mlp.W_out.data = replacement.to(self.model.blocks[layer].mlp.W_out.device)
             self.modified_layers['mlp'][layer] = self.modified_layers.get(layer,[])+[(self.model.blocks[layer].mlp.W_out.data.to('cpu'),replacement.to('cpu'))]
         return self.model.blocks[layer].mlp.W_out.data
-    
+
     def tokenize_instructions_fn(
         self,
         instructions: List[str]
@@ -314,7 +312,7 @@ class ModelAbliterator:
                 return any(s in namefunc for s in self.activation_layers)
             names_filter = activation_layering
 
-        
+
         cache_dict, fwd, bwd = self.model.get_caching_hooks(
             names_filter,
             incl_bwd,
@@ -328,7 +326,7 @@ class ModelAbliterator:
         if not max_new_tokens:
             # must do at least 1 token
             max_new_tokens = 1
-        
+
         with self.model.hooks(fwd_hooks=fwd_hooks, bwd_hooks=bwd, reset_hooks_end=reset_hooks_end, clear_contexts=clear_contexts):
             #model_out = self.model(*model_args,**model_kwargs)
             model_out,toks = self.generate_logits(*model_args,max_tokens_generated=max_new_tokens, **model_kwargs)
@@ -336,7 +334,7 @@ class ModelAbliterator:
                 model_out.backward()
 
         return model_out, cache_dict
-    
+
     def apply_refusal_dirs(self, refusal_dirs, W_O=True, mlp=True, layers=None):
         if layers == None:
             layers = list(l for l in range(1,self.model.cfg.n_layers))
@@ -349,7 +347,7 @@ class ModelAbliterator:
                             refusal_dir = refusal_dir.to(matrix.device)
                         proj = einops.einsum(matrix, refusal_dir.view(-1, 1), '... d_model, d_model single -> ... single') * refusal_dir
                         modifying[1](layer,matrix - proj)
-    
+
     def induce_refusal_dir(self, refusal_dir, W_O=True, mlp=True, layers=None):
         # incomplete, needs work
         if layers == None:
@@ -363,19 +361,19 @@ class ModelAbliterator:
                     proj = einops.einsum(matrix, refusal_dir.view(-1, 1), '... d_model, d_model single -> ... single') * refusal_dir
                     avg_proj = refusal_dir * self.get_avg_projections(utils.get_act_name(self.activation_layers[0], layer),refusal_dir)
                     modifying[1](layer,(matrix - proj) + avg_proj)
-        
+
     def test_dir(self,refusal_dir,activation_layers=None,use_hooks=True,layers=None,**kwargs):
-        # `use_hooks=True` is better for bigger models as it causes a lot of memory swapping otherwise, but 
+        # `use_hooks=True` is better for bigger models as it causes a lot of memory swapping otherwise, but
         # `use_hooks=False` is much more representative of the final weights manipulation
 
         before_hooks = self.fwd_hooks
         try:
             if layers is None:
                 layers = self.get_whitelisted_layers()
-            
+
             if activation_layers is None:
                 activation_layers = self.activation_layers
-            
+
             if use_hooks:
                 hooks = self.fwd_hooks
                 hook_fn = functools.partial(directional_hook,direction=refusal_dir)
@@ -387,7 +385,7 @@ class ModelAbliterator:
                     return self.measure_scores(**kwargs)
         finally:
             self.fwd_hooks = before_hooks
-    
+
     def find_best_refusal_dir(self, N=4, positive=False, use_hooks=True, invert=False):
         dirs = self.refusal_dirs(invert=invert)
         if self.modified:
@@ -401,16 +399,16 @@ class ModelAbliterator:
     def measure_scores(self, N=4, sampled_token_ct=8, measure='max', batch_measure='max', positive=False):
         toks = self.tokenize_instructions_fn(instructions=self.harmful_inst_test[:N])
         logits,cache = self.run_with_cache(toks,max_new_tokens=sampled_token_ct,drop_refusals=False)
-        
+
         negative_score,positive_score = self.measure_scores_from_logits(logits,sampled_token_ct,measure=batch_measure)
-        
+
         negative_score = measure_fn(measure,negative_score)
         positive_score = measure_fn(measure,positive_score)
         return {'negative':negative_score.to('cpu'), 'positive':positive_score.to('cpu')}
 
     def measure_scores_from_logits(self,logits, sequence, measure='max'):
         normalized_scores = torch.softmax(logits[:,-sequence:,:].to('cpu'),dim=-1)[:,:,list(self.positive_toks)+list(self.negative_toks)]
-        
+
         normalized_positive,normalized_negative = torch.split(normalized_scores,[len(self.positive_toks), len(self.negative_toks)], dim=2)
 
         max_negative_score_per_sequence = torch.max(normalized_negative,dim=-1)[0]
@@ -506,7 +504,7 @@ class ModelAbliterator:
 
             del logits, cache
             clear_mem()
-        
+
         return ActivationCache(base,self.model), z_label
 
     def cache_activations(self,N=128,batch_size=8,measure_refusal=0,last_indices=1,reset=True,activation_layers=-1,preserve_harmless=True,stop_at_layer=None):
@@ -514,7 +512,7 @@ class ModelAbliterator:
             print("WARNING: Caching activations using a context")
         if self.modified:
             print("WARNING: Running modified model")
-        
+
         if activation_layers == -1:
             activation_layers = self.activation_layers
 
