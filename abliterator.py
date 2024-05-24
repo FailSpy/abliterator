@@ -63,7 +63,7 @@ def clear_mem():
     gc.collect()
     torch.cuda.empty_cache()
 
-def measure_fn(measure,*args,**kwargs):
+def measure_fn(measure, input_tensor, *args,**kwargs):
     avail_measures = {
         'mean': torch.mean,
         'median': torch.median,
@@ -72,7 +72,7 @@ def measure_fn(measure,*args,**kwargs):
     }
 
     try:
-        return avail_measures.get(measure)(*args,**kwargs)
+        return avail_measures.get(measure)(input_tensor, *args,**kwargs)
     except:
         raise NotImplementedError(f"Unknown measure function '{measure}'. Available measures:" + ', '.join([f"'{str(fn)}'" for fn in avail_measures.keys()]) )
 
@@ -225,7 +225,7 @@ class ModelAbliterator:
         act_key = key or self.activation_layers[0]
         if len(self.harmfuls[key]) < layer:
             raise IndexError("Invalid layer")
-        self.calculate_mean_dirs(utils.get_act_name(act_key, layer), include_overall_mean=include_overall_mean)
+        return self.calculate_mean_dirs(utils.get_act_name(act_key, layer), include_overall_mean=include_overall_mean)
 
     def refusal_dirs(self,invert=False):
         if not self.harmful:
