@@ -1,0 +1,19 @@
+[project]
+name = "abliterator"
+version = "0.0.0"
+description = "Python library for transformer activation steering and ablation."
+readme = "README.md"
+requires-python = ">=3.8"
+license = {file = "LICENSE"}
+
+keywords = ["transformers", "steering", "ablation", "interpretability", "machine learning"]
+
+authors = []
+
+maintainers = []
+
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
