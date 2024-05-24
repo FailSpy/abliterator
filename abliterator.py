@@ -72,8 +72,8 @@ def measure_fn(measure, input_tensor, *args,**kwargs):
     }
 
     try:
-        return avail_measures.get(measure)(input_tensor, *args,**kwargs)
-    except:
+        return avail_measures[measure](input_tensor, *args,**kwargs)
+    except KeyError:
         raise NotImplementedError(f"Unknown measure function '{measure}'. Available measures:" + ', '.join([f"'{str(fn)}'" for fn in avail_measures.keys()]) )
 
 class ChatTemplate:
