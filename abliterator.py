@@ -493,7 +493,7 @@ class ModelAbliterator:
         for i in tqdm(range(0,min(N,len(toks)),batch_size)):
             logits,cache = self.run_with_cache(toks[i:min(i+batch_size,len(toks))],max_new_tokens=measure_refusal,stop_at_layer=stop_at_layer)
             if measure_refusal > 1:
-                directions[2].extend(self.measure_scores_from_logits(logits,measure_refusal)[0])
+                z_label.extend(self.measure_scores_from_logits(logits,measure_refusal)[0])
             for key in cache:
                 if self.activation_layers is None or any(k in key for k in self.activation_layers):
                     tensor = torch.mean(cache[key][:,-last_indices:,:].to('cpu'),dim=1)
