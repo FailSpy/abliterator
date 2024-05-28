@@ -54,17 +54,6 @@ def prepare_dataset(dataset:Tuple[List[str], List[str]]|List[str]) -> Tuple[List
 
     return train, test
 
-def directional_hook(
-    activation: Float[Tensor, "... d_model"],
-    hook: HookPoint,
-    direction: Float[Tensor, "d_model"]
-) -> Float[Tensor, "... d_model"]:
-    if activation.device != direction.device:
-        direction = direction.to(activation.device)
-
-    proj = einops.einsum(activation, direction.view(-1, 1), '... d_model, d_model single -> ... single') * direction
-    return activation - proj
-
 def clear_mem():
     gc.collect()
     torch.cuda.empty_cache()
@@ -234,6 +223,19 @@ class ModelAbliterator:
             dirs['mean_dir'] =  torch.sum(self.harmless[key]+self.harmful[key]) / (len(self.harmless[key]) + len(self.harmful[key]))
         return dirs
 
+    def calculate_scaled_projection(self, mat: Float[Tensor, '... d_model'], vec: Float[Tensor, 'd_model']) -> Float[Tensor, '... d_model']:
+        # convert vector is a unit vector if it is not already
+        if not torch.isclose((vec**2).sum(), torch.tensor(1)):
+            vec = vec / vec.norm()
+
+        # This calculates the projection of the `mat` tensor onto the vector, scaling by the vector.
+        projection = einops.einsum(mat, vec.view(-1, 1), '... d_model, d_model single -> ... single') * vec
+
+        return projection
+
+    def calculate_orthogonal_complement(self, mat: Float[Tensor, '... d_model'], vec: Float[Tensor, 'd_model']) -> Float[Tensor, '... d_model']:
+        return mat - self.calculate_scaled_projection(mat, vec)
+
     def get_avg_projections(self, key: str, direction: Float[Tensor, 'd_model']) -> Tuple[Float[Tensor, 'd_model'], Float[Tensor, 'd_model']]:
         dirs = self.calculate_mean_dirs(self,key)
         return (torch.dot(dirs['harmful_mean'], direction), torch.dot(dirs['harmless_mean'], direction))
@@ -243,6 +245,16 @@ class ModelAbliterator:
         if len(self.harmfuls[key]) < layer:
             raise IndexError("Invalid layer")
         return self.calculate_mean_dirs(utils.get_act_name(act_key, layer), include_overall_mean=include_overall_mean)
+
+    def orthogonal_complement_hook(
+        self,
+        activation: Float[Tensor, "... d_model"],
+        hook: HookPoint,
+        direction: Float[Tensor, "d_model"]
+    ) -> Float[Tensor, "... d_model"]:
+        if activation.device != direction.device:
+            direction = direction.to(activation.device)
+        return self.calculate_orthogonal_complement(activation, direction)
 
     def refusal_dirs(self, invert: bool = False) -> Dict[str, Float[Tensor, 'd_model']]:
         if not self.harmful:
@@ -402,7 +414,7 @@ class ModelAbliterator:
                         matrix = modifying[1](layer)
                         if refusal_dir.device != matrix.device:
                             refusal_dir = refusal_dir.to(matrix.device)
-                        proj = einops.einsum(matrix, refusal_dir.view(-1, 1), '... d_model, d_model single -> ... single') * refusal_dir
+                        proj = self.calculate_scaled_projection(matrix, refusal_dir)
                         modifying[1](layer,matrix - proj)
 
     def induce_refusal_dir(
@@ -421,7 +433,7 @@ class ModelAbliterator:
                     matrix = modifying[1](layer)
                     if refusal_dir.device != matrix.device:
                         refusal_dir = refusal_dir.to(matrix.device)
-                    proj = einops.einsum(matrix, refusal_dir.view(-1, 1), '... d_model, d_model single -> ... single') * refusal_dir
+                    proj = self.calculate_scaled_projection(matrix, refusal_dir)
                     avg_proj = refusal_dir * self.get_avg_projections(utils.get_act_name(self.activation_layers[0], layer),refusal_dir)
                     modifying[1](layer,(matrix - proj) + avg_proj)
 
@@ -446,7 +458,7 @@ class ModelAbliterator:
 
             if use_hooks:
                 hooks = self.fwd_hooks
-                hook_fn = functools.partial(directional_hook,direction=refusal_dir)
+                hook_fn = functools.partial(self.orthogonal_complement_hook,direction=refusal_dir)
                 self.fwd_hooks = before_hooks+[(act_name,hook_fn) for ln,act_name in self.get_all_act_names()]
                 return self.measure_scores(**kwargs)
             else:
