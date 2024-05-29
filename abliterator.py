@@ -632,10 +632,12 @@ class ModelAbliterator:
         if activation_layers == -1:
             activation_layers = self.activation_layers
 
-        if reset == True or getattr(self,"harmless",None) == None:
+        harmless_is_set = len(getattr(self,"harmless",{})) > 0
+        preserve_harmless = harmless_is_set and preserve_harmless
+
+        if reset == True or getattr(self,"harmless",None) is None:
             self.harmful = {}
-            if not preserve_harmless or getattr(self,"harmless",None) == None:
-                preserve_harmless = False
+            if not preserve_harmless:
                 self.harmless = {}
 
             self.harmful_z_label = []
