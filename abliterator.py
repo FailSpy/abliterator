@@ -222,16 +222,16 @@ class ModelAbliterator:
     def get_all_act_names(self, activation_layers: List[str] = None) -> List[Tuple[int,str]]:
         return [(i,utils.get_act_name(act_name,i)) for i in self.get_whitelisted_layers() for act_name in (activation_layers or self.activation_layers)]
 
-    def calculate_mean_dir(self, key: str, d: Dict[str, Float[Tensor, 'd_model']]) -> Float[Tensor, 'd_model']:
-        return sum(d[key]) / len(d[key])
-
     def calculate_mean_dirs(self, key: str, include_overall_mean: bool = False) -> Dict[str, Float[Tensor, 'd_model']]:
-        dirs = {
-            'harmful_mean': self.calculate_mean_dir(key,self.harmful),
-            'harmless_mean': self.calculate_mean_dir(key,self.harmless),
-        }
+        dirs = {}
+
+        dirs['harmful_mean'] = torch.mean(self.harmful[key], dim=0)
+        dirs['harmless_mean'] = torch.mean(self.harmless[key], dim=0)
+
         if include_overall_mean:
-            dirs['mean_dir'] =  torch.sum(self.harmless[key]+self.harmful[key]) / (len(self.harmless[key]) + len(self.harmful[key]))
+            # take the mean between the two, then take the mean across the means.
+            dirs['mean_dir'] =  torch.mean((self.harmful[key] + self.harmless[key]) / 2.0, dim=0)
+
         return dirs
 
     def get_avg_projections(self, key: str, direction: Float[Tensor, 'd_model']) -> Tuple[Float[Tensor, 'd_model'], Float[Tensor, 'd_model']]:
