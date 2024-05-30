@@ -223,13 +223,13 @@ class ModelAbliterator:
         return [(i,utils.get_act_name(act_name,i)) for i in self.get_whitelisted_layers() for act_name in (activation_layers or self.activation_layers)]
 
     def calculate_mean_dirs(self, key: str, include_overall_mean: bool = False) -> Dict[str, Float[Tensor, 'd_model']]:
-        dirs = {}
-
-        dirs['harmful_mean'] = torch.mean(self.harmful[key], dim=0)
-        dirs['harmless_mean'] = torch.mean(self.harmless[key], dim=0)
+        dirs = {
+            'harmful_mean': torch.mean(self.harmful[key], dim=0),
+            'harmless_mean': torch.mean(self.harmless[key], dim=0)
+        }
 
         if include_overall_mean:
-            # take the mean between the two, then take the mean across the means.
+            # take the mean between the two, then take the mean across the mean.
             dirs['mean_dir'] =  torch.mean((self.harmful[key] + self.harmless[key]) / 2.0, dim=0)
 
         return dirs
