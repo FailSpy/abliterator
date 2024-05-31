@@ -222,16 +222,29 @@ class ModelAbliterator:
     def get_all_act_names(self, activation_layers: List[str] = None) -> List[Tuple[int,str]]:
         return [(i,utils.get_act_name(act_name,i)) for i in self.get_whitelisted_layers() for act_name in (activation_layers or self.activation_layers)]
 
-    def calculate_mean_dir(self, key: str, d: Dict[str, Float[Tensor, 'd_model']]) -> Float[Tensor, 'd_model']:
-        return sum(d[key]) / len(d[key])
-
     def calculate_mean_dirs(self, key: str, include_overall_mean: bool = False) -> Dict[str, Float[Tensor, 'd_model']]:
         dirs = {
-            'harmful_mean': self.calculate_mean_dir(key,self.harmful),
-            'harmless_mean': self.calculate_mean_dir(key,self.harmless),
+            'harmful_mean': torch.mean(self.harmful[key], dim=0),
+            'harmless_mean': torch.mean(self.harmless[key], dim=0)
         }
+
         if include_overall_mean:
-            dirs['mean_dir'] =  torch.sum(self.harmless[key]+self.harmful[key]) / (len(self.harmless[key]) + len(self.harmful[key]))
+            if self.harmful[key].shape != self.harmless[key].shape or self.harmful[key].device.type == 'cuda':
+                # If the shapes are different, we can't add them together; we'll need to concatenate the tensors first.
+                # Using 'cpu', this is slower than the alternative below.
+                # Using 'cuda', this seems to be faster than the alternatives.
+                # NOTE: Assume both tensors are on the same device.
+                #
+                dirs['mean_dir'] = torch.mean(torch.cat((self.harmful[key], self.harmless[key]), dim=0), dim=0)
+            else:
+                # If the shapes are the same, we can add them together, take the mean,
+                # then divide by 2.0 to account for the initial element-wise addition of the tensors.
+                #
+                # The result is identical to:
+                #    `torch.sum(self.harmful[key] + self.harmless[key]) / (len(self.harmful[key]) + len(self.harmless[key]))`
+                #
+                dirs['mean_dir'] =  torch.mean(self.harmful[key] + self.harmless[key], dim=0) / 2.0
+
         return dirs
 
     def get_avg_projections(self, key: str, direction: Float[Tensor, 'd_model']) -> Tuple[Float[Tensor, 'd_model'], Float[Tensor, 'd_model']]:
