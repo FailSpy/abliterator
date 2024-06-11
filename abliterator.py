@@ -428,7 +428,7 @@ class ModelAbliterator:
                         matrix = modifying[1](layer)
                         if refusal_dir.device != matrix.device:
                             refusal_dir = refusal_dir.to(matrix.device)
-                        proj = einops.einsum(matrix, refusal_dir.view(-1, 1), '... d_model, d_model single -> ... single') * refusal_dir
+                        proj = self.calculate_scaled_projection(matrix, refusal_dir)
                         modifying[1](layer,matrix - proj)
 
     def induce_refusal_dir(
@@ -447,7 +447,7 @@ class ModelAbliterator:
                     matrix = modifying[1](layer)
                     if refusal_dir.device != matrix.device:
                         refusal_dir = refusal_dir.to(matrix.device)
-                    proj = einops.einsum(matrix, refusal_dir.view(-1, 1), '... d_model, d_model single -> ... single') * refusal_dir
+                    proj = self.calculate_scaled_projection(matrix, refusal_dir)
                     avg_proj = refusal_dir * self.get_avg_projections(utils.get_act_name(self.activation_layers[0], layer),refusal_dir)
                     modifying[1](layer,(matrix - proj) + avg_proj)
 
