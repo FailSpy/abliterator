@@ -14,6 +14,7 @@ Right now, this works very well for my own personal workflow, but I would like t
 
 ## Loading a model in
 ```python
+import torch
 import abliterator
 
 model = "meta-llama/Meta-Llama-3-70B-Instruct"  # the huggingface or path to the model you're interested in loading in
@@ -30,6 +31,7 @@ my_model = abliterator.ModelAbliterator(
   model,
   dataset,
   device='cuda',
+  dtype=torch.bfloat16,
   n_devices=None,
   cache_fname=None,
   activation_layers=['resid_pre', 'resid_post', 'attn_out', 'mlp_out'],
@@ -38,6 +40,7 @@ my_model = abliterator.ModelAbliterator(
   negative_toks=negative_toks
 )
 ```
+For CPU runs on machines without native BF16 support, use `device='cpu', dtype=torch.float32`.
 
 ## Cache activations/sample dataset
 Once loaded in, run the model against N samples of harmful, and N samples of harmless so it has some data to work with:

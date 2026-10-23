@@ -109,6 +109,7 @@ class ModelAbliterator:
         model: str,
         dataset: Tuple[List[str], List[str]]|List[Tuple[List[str], List[str]]],
         device: str = 'cuda',
+        dtype: torch.dtype = torch.bfloat16,
         n_devices: int = None,
         cache_fname: str = None,
         activation_layers: List[str] = ['resid_pre',  'resid_post', 'mlp_out', 'attn_out'],
@@ -129,7 +130,7 @@ class ModelAbliterator:
             model,
             n_devices=n_devices,
             device=device,
-            dtype=torch.bfloat16,
+            dtype=dtype,
             default_padding_side='left'
         )
 
